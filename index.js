@@ -1,8 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
+const { comerciosTools } = require('./tools/comercios-tools');
+const { connectMongoDB, closeMongoDB } = require('./tools/mongodb-connection');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,277 +11,252 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({origin: true}));
 app.use(express.json());
 
-// ==================== CARGA DE DATOS ====================
-let comerciosData = [];
+// ==================== INICIALIZACIÓN ====================
+let mongoConectado = false;
 
-function cargarComercios() {
+async function inicializarServicio() {
   try {
-    const filePath = path.join(__dirname, 'renval_Item.json');
-    comerciosData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    console.log(`✅ ${comerciosData.length} comercios cargados exitosamente`);
-    return true;
+    await connectMongoDB();
+    mongoConectado = true;
+    console.log('✅ Servicio inicializado correctamente');
   } catch (error) {
-    console.error('❌ Error cargando comercios:', error.message);
-    return false;
+    console.error('❌ Error al inicializar servicio:', error.message);
   }
 }
 
-// Cargar al iniciar
-cargarComercios();
+// Inicializar al arrancar
+inicializarServicio();
 
-// ==================== FUNCIONES DE BÚSQUEDA ====================
-
-/**
- * Limpia el texto HTML de las descripciones
- */
-function limpiarHTML(html) {
-  if (!html) return '';
-  return html
-    .replace(/<[^>]*>/g, '') // Remover tags HTML
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .trim()
-    .substring(0, 600); // Limitar longitud
-}
+// ==================== FUNCIONES AUXILIARES ====================
 
 /**
- * Detecta la categoría del mensaje del usuario
+ * Procesa las tool calls de Claude y ejecuta las funciones correspondientes
  */
-function detectarCategoria(mensaje) {
-  const mensajeLower = mensaje.toLowerCase();
-  
-  const categorias = {
-    'comida': ['restaurante', 'comida', 'pollo', 'pizza', 'cafetería', 'café', 'almuerzo', 'cena', 'desayuno', 'comedor', 'food', 'comer', 'hamburgues', 'tacos', 'pupusas'],
-    'eventos': ['eventos', 'flores', 'decoración', 'bodas', 'boda', 'cumpleaños', 'fiesta', 'celebración', 'decorar', 'floristería'],
-    'servicios': ['barbería', 'corte', 'pelo', 'barber', 'contadores', 'contabilidad', 'reparación', 'mecánico', 'taller', 'servicio'],
-    'compras': ['super', 'tienda', 'mercado', 'minisuper', 'supermercado', 'compras', 'comprar', 'productos'],
-    'salud': ['doctor', 'médico', 'clínica', 'farmacia', 'salud', 'medicina', 'dental', 'dentista'],
-    'tecnología': ['tecnología', 'computadora', 'celular', 'teléfono', 'reparación', 'tech', 'electrónica']
-  };
-  
-  for (const [categoria, keywords] of Object.entries(categorias)) {
-    if (keywords.some(keyword => mensajeLower.includes(keyword))) {
-      return categoria;
-    }
-  }
-  
-  return null;
-}
+async function procesarToolCalls(toolCalls) {
+  const resultados = [];
 
-/**
- * Busca comercios relevantes según el mensaje del usuario
- */
-function buscarComerciosRelevantes(mensaje) {
-  if (!mensaje || comerciosData.length === 0) {
-    return [];
-  }
-
-  const mensajeLower = mensaje.toLowerCase();
-  const palabrasClave = mensajeLower.split(' ').filter(p => p.length > 2);
-  const categoria = detectarCategoria(mensaje);
-  
-  console.log(`🔍 Búsqueda: "${mensaje}"`);
-  console.log(`📂 Categoría detectada: ${categoria || 'general'}`);
-
-  // Función de scoring para rankear resultados
-  const calcularScore = (comercio) => {
-    let score = 0;
-    const nombre = comercio.name?.toLowerCase() || '';
-    const descripcion = comercio.description?.toLowerCase() || '';
-    const tags = comercio.tags?.join(' ').toLowerCase() || '';
-    const textoCompleto = `${nombre} ${descripcion} ${tags}`;
-
-    // Coincidencia en el nombre (peso alto)
-    palabrasClave.forEach(palabra => {
-      if (nombre.includes(palabra)) score += 10;
-    });
-
-    // Coincidencia en tags (peso medio)
-    palabrasClave.forEach(palabra => {
-      if (tags.includes(palabra)) score += 5;
-    });
-
-    // Coincidencia en descripción (peso bajo)
-    palabrasClave.forEach(palabra => {
-      if (descripcion.includes(palabra)) score += 2;
-    });
-
-    // Bonus por categoría
-    if (categoria) {
-      const categoriaKeywords = {
-        'comida': ['restaurante', 'comida', 'pollo', 'food'],
-        'eventos': ['eventos', 'flores', 'decoración'],
-        'servicios': ['servicio', 'barbería', 'contador'],
-        'compras': ['super', 'tienda', 'mercado'],
-      };
+  for (const toolCall of toolCalls) {
+    const { id, name, input } = toolCall;
+    
+    try {
+      console.log(`🔧 Ejecutando tool: ${name}`);
+      console.log(`📝 Parámetros:`, JSON.stringify(input, null, 2));
       
-      const keywords = categoriaKeywords[categoria] || [];
-      if (keywords.some(k => textoCompleto.includes(k))) {
-        score += 15;
+      // Ejecutar el handler correspondiente
+      const handler = comerciosTools.handlers[name];
+      if (!handler) {
+        throw new Error(`Handler no encontrado para: ${name}`);
       }
+      
+      const resultado = await handler(input);
+      
+      console.log(`✅ Tool ${name} ejecutada exitosamente`);
+      
+      resultados.push({
+        type: 'tool_result',
+        tool_use_id: id,
+        content: JSON.stringify(resultado, null, 2),
+      });
+    } catch (error) {
+      console.error(`❌ Error ejecutando tool ${name}:`, error.message);
+      
+      resultados.push({
+        type: 'tool_result',
+        tool_use_id: id,
+        is_error: true,
+        content: `Error: ${error.message}`,
+      });
     }
+  }
 
-    // Bonus si está verificado
-    if (comercio.verify) score += 3;
-
-    // Bonus si tiene información de contacto completa
-    if (comercio.whatsapp) score += 1;
-    if (comercio.phone) score += 1;
-    if (comercio.address) score += 1;
-
-    return score;
-  };
-
-  // Calcular scores y filtrar
-  const comerciosConScore = comerciosData
-    .map(comercio => ({
-      comercio,
-      score: calcularScore(comercio)
-    }))
-    .filter(item => item.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5); // Top 5 resultados
-
-  console.log(`✅ ${comerciosConScore.length} comercios encontrados`);
-
-  // Formatear resultados
-  return comerciosConScore.map(item => {
-    const c = item.comercio;
-    return {
-      id: c._id,
-      nombre: c.name,
-      descripcion: limpiarHTML(c.description),
-      direccion: c.address || 'No especificada',
-      telefono: c.phone || null,
-      whatsapp: c.whatsapp ? `+${c.whatsapp}` : null,
-      email: c.email || null,
-      horario: c.opening && c.closing 
-        ? `${c.opening}:00 - ${c.closing}:00` 
-        : 'Consultar',
-      redes: {
-        facebook: c.facebook || null,
-        instagram: c.instagram || null,
-        website: c.website || null
-      },
-      verificado: c.verify || false,
-      tags: c.tags || [],
-      score: item.score // Para debugging
-    };
-  });
+  return resultados;
 }
 
-// ==================== ENDPOINTS ====================
-
 /**
- * Endpoint principal de chat con Claude
+ * Extrae texto y tool calls del contenido de Claude
  */
+function extraerContenido(content) {
+  let texto = '';
+  const toolCalls = [];
+
+  for (const block of content) {
+    if (block.type === 'text') {
+      texto += block.text;
+    } else if (block.type === 'tool_use') {
+      toolCalls.push(block);
+    }
+  }
+
+  return { texto, toolCalls };
+}
+
+// ==================== ENDPOINT PRINCIPAL DE CHAT ====================
+
 app.post('/chat', async (req, res) => {
   try {
-    const {message, history} = req.body;
+    const { message, history = [] } = req.body;
 
     // Validaciones
     if (!message) {
-      return res.status(400).json({error: 'El mensaje es requerido'});
+      return res.status(400).json({ error: 'El mensaje es requerido' });
+    }
+
+    if (!mongoConectado) {
+      return res.status(503).json({ 
+        error: 'Servicio no disponible',
+        details: 'La conexión a la base de datos no está lista'
+      });
     }
 
     const apiKey = process.env.CLAUDE_API_KEY;
     if (!apiKey) {
-      console.error('⚠️  CLAUDE_API_KEY no configurada');
       return res.status(500).json({
         error: 'Configuración del servidor incompleta',
         hint: 'Configura CLAUDE_API_KEY en las variables de entorno'
       });
     }
 
-    // Buscar comercios relevantes
-    const comerciosRelevantes = buscarComerciosRelevantes(message);
-    
-    // Construir system prompt base
-    let systemPrompt = `Eres Frankie, un asistente virtual amigable y útil para una aplicación móvil de comercios locales en El Salvador.
+    console.log(`\n💬 Nueva consulta: "${message.substring(0, 80)}..."`);
 
-PROPÓSITO:
+    // System prompt con instrucciones para el agente
+    const systemPrompt = `Eres Frankie, un asistente virtual amigable y útil para una aplicación móvil de comercios locales en El Salvador.
+
+TU PROPÓSITO:
 - Ayudar a los usuarios a encontrar comercios y negocios locales
-- Proporcionar información detallada sobre servicios y productos
-- Facilitar el contacto con los negocios
-- Responder preguntas generales de manera clara
+- Proporcionar información detallada y precisa sobre servicios y productos
+- Facilitar el contacto directo con los negocios
+- Ofrecer recomendaciones personalizadas
 
-PERSONALIDAD:
-- Amable, profesional y cercano
+TU PERSONALIDAD:
+- Amable, profesional y cercano con los salvadoreños
 - Proactivo en ofrecer información útil
-- Conciso (estás en un chat móvil)
+- Conciso pero completo (estás en un chat móvil)
 - Honesto cuando no tienes información
 
+HERRAMIENTAS DISPONIBLES:
+Tienes acceso a varias herramientas para consultar información de comercios:
+- buscar_comercio: Para buscar negocios por nombre o palabra clave
+- listar_comercios: Para mostrar listados con filtros
+- comercio_detalle_completo: Para obtener toda la información de un comercio
+- buscar_por_categoria: Para búsquedas por tags como "restaurantes", "eventos", "flores"
+- obtener_contacto_comercio: Para obtener datos de contacto específicos
+- comercios_verificados: Para mostrar opciones confiables
+- buscar_por_ubicacion: Para buscar por ciudad o zona
+
+CÓMO USAR LAS HERRAMIENTAS:
+1. Cuando el usuario mencione un comercio específico o haga una búsqueda, USA las herramientas
+2. Si mencionan "contacto", "teléfono", "WhatsApp" → usa obtener_contacto_comercio
+3. Para búsquedas generales → usa buscar_comercio o buscar_por_categoria
+4. Si no estás seguro del ID, primero busca el comercio, luego obtén detalles
+
 FORMATO DE RESPUESTAS:
-- Usa emojis apropiados para hacer el chat más amigable
+- Usa emojis apropiados (📍 para ubicación, 📞 para teléfono, 💬 para WhatsApp, etc.)
 - Estructura la información de forma clara
-- Incluye datos de contacto cuando sea relevante
-- Si hay varios comercios relevantes, menciona los más apropiados`;
+- Siempre incluye datos de contacto cuando estén disponibles
+- Proporciona links de WhatsApp en formato clickeable: wa.me/503XXXXXXXX
+- Si hay varios resultados, menciona los más relevantes y pregunta si quieren más info
 
-    // Agregar comercios al contexto si hay resultados
-    if (comerciosRelevantes.length > 0) {
-      systemPrompt += `\n\n📍 COMERCIOS RELEVANTES PARA ESTA CONSULTA:\n\n`;
-      
-      comerciosRelevantes.forEach((comercio, index) => {
-        systemPrompt += `${index + 1}. ${comercio.nombre}\n`;
-        systemPrompt += `   Descripción: ${comercio.descripcion.substring(0, 300)}...\n`;
-        systemPrompt += `   📍 Dirección: ${comercio.direccion}\n`;
-        if (comercio.telefono) systemPrompt += `   📞 Teléfono: ${comercio.telefono}\n`;
-        if (comercio.whatsapp) systemPrompt += `   💬 WhatsApp: ${comercio.whatsapp}\n`;
-        if (comercio.email) systemPrompt += `   📧 Email: ${comercio.email}\n`;
-        systemPrompt += `   🕐 Horario: ${comercio.horario}\n`;
-        if (comercio.verificado) systemPrompt += `   ✅ Comercio verificado\n`;
-        systemPrompt += `\n`;
-      });
+EJEMPLOS DE USO:
+Usuario: "Busco un lugar para hacer eventos"
+Tú: [Usas buscar_por_categoria con tag="eventos"] y presentas los resultados
 
-      systemPrompt += `\nUSA ESTA INFORMACIÓN para responder de manera precisa y útil. Menciona los datos de contacto relevantes.`;
-      
-      console.log(`📊 Contexto: ${comerciosRelevantes.length} comercios agregados`);
-    } else {
-      systemPrompt += `\n\nNOTA: No se encontraron comercios específicos para esta consulta. Si el usuario busca algo específico, sugiere que reformule la búsqueda o pregunta de qué tipo de negocio necesita.`;
-      console.log(`⚠️  No se encontraron comercios relevantes`);
-    }
+Usuario: "Dame el teléfono de Moment's Events"
+Tú: [Usas buscar_comercio para encontrar el ID, luego obtener_contacto_comercio]
 
-    // Construir mensajes
-    const messages = [
-      ...(history || []),
-      {role: 'user', content: message},
+Usuario: "Qué comercios verificados hay?"
+Tú: [Usas comercios_verificados]
+
+IMPORTANTE:
+- SIEMPRE usa las herramientas cuando el usuario busque información de comercios
+- NO inventes información, usa solo lo que las herramientas te devuelvan
+- Si un dato no está disponible, dilo claramente
+- Sé específico con números de teléfono y direcciones`;
+
+    // Construir mensajes iniciales
+    let messages = [
+      ...history,
+      { role: 'user', content: message }
     ];
 
-    console.log(`💬 Procesando mensaje: "${message.substring(0, 50)}..."`);
+    let conversacionCompleta = false;
+    let respuestaFinal = '';
+    let iteraciones = 0;
+    const MAX_ITERACIONES = 5;
 
-    // Llamar a Claude API
-    const response = await axios.post(
-      'https://api.anthropic.com/v1/messages',
-      {
-        model: 'claude-sonnet-4-5-20250929',
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: messages,
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
+    // Loop para manejar tool calls
+    while (!conversacionCompleta && iteraciones < MAX_ITERACIONES) {
+      iteraciones++;
+      
+      console.log(`\n🔄 Iteración ${iteraciones} - Llamando a Claude...`);
+
+      // Llamar a Claude con tools
+      const claudeResponse = await axios.post(
+        'https://api.anthropic.com/v1/messages',
+        {
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 2048,
+          system: systemPrompt,
+          messages: messages,
+          tools: comerciosTools.tools,
         },
-        timeout: 30000, // 30 segundos
-      },
-    );
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          timeout: 60000,
+        }
+      );
 
-    const assistantMessage = response.data.content[0].text;
+      const { content, stop_reason } = claudeResponse.data;
+      const { texto, toolCalls } = extraerContenido(content);
 
-    console.log(`✅ Respuesta generada (${assistantMessage.length} caracteres)`);
-    console.log(`🔢 Tokens usados: ${response.data.usage?.input_tokens || 0} in / ${response.data.usage?.output_tokens || 0} out`);
+      console.log(`📊 Stop reason: ${stop_reason}`);
+      console.log(`🔧 Tool calls: ${toolCalls.length}`);
+
+      // Si hay texto, guardarlo
+      if (texto) {
+        respuestaFinal += texto;
+      }
+
+      // Si hay tool calls, ejecutarlas
+      if (toolCalls.length > 0) {
+        // Agregar el mensaje del asistente con los tool calls
+        messages.push({
+          role: 'assistant',
+          content: content
+        });
+
+        // Ejecutar las tools
+        const toolResults = await procesarToolCalls(toolCalls);
+
+        // Agregar los resultados
+        messages.push({
+          role: 'user',
+          content: toolResults
+        });
+
+        console.log(`✅ ${toolResults.length} tool(s) ejecutada(s), continuando conversación...`);
+      } else {
+        // No hay más tool calls, conversación completa
+        conversacionCompleta = true;
+      }
+
+      // Si Claude indica que terminó (end_turn), salir del loop
+      if (stop_reason === 'end_turn') {
+        conversacionCompleta = true;
+      }
+    }
+
+    console.log(`\n✅ Respuesta completada en ${iteraciones} iteración(es)`);
+    console.log(`📝 Longitud de respuesta: ${respuestaFinal.length} caracteres`);
 
     // Responder al cliente
     res.json({
-      message: assistantMessage,
-      conversationId: response.data.id,
+      message: respuestaFinal,
       metadata: {
-        comerciosEncontrados: comerciosRelevantes.length,
-        tokensUsados: response.data.usage,
+        iteraciones: iteraciones,
         timestamp: new Date().toISOString()
       }
     });
@@ -305,131 +280,38 @@ FORMATO DE RESPUESTAS:
   }
 });
 
-/**
- * Endpoint para buscar comercios directamente (sin Claude)
- */
-app.get('/comercios/buscar', (req, res) => {
-  try {
-    const { q, limit = 10 } = req.query;
-    
-    if (!q) {
-      // Si no hay query, devolver comercios destacados
-      const destacados = comerciosData
-        .filter(c => c.isFeatured || c.verify)
-        .slice(0, parseInt(limit));
-      
-      return res.json({
-        resultados: destacados.length,
-        comercios: destacados.map(c => ({
-          id: c._id,
-          nombre: c.name,
-          descripcion: limpiarHTML(c.description).substring(0, 150) + '...',
-          verificado: c.verify,
-          destacado: c.isFeatured
-        }))
-      });
-    }
-    
-    const resultados = buscarComerciosRelevantes(q);
-    
-    res.json({
-      query: q,
-      resultados: resultados.length,
-      comercios: resultados.slice(0, parseInt(limit))
-    });
-    
-  } catch (error) {
-    console.error('❌ Error en /comercios/buscar:', error);
-    res.status(500).json({ error: 'Error al buscar comercios' });
-  }
-});
+// ==================== ENDPOINTS AUXILIARES ====================
 
 /**
- * Endpoint para obtener un comercio específico por ID
+ * Endpoint de prueba directo de tools (sin Claude)
  */
-app.get('/comercios/:id', (req, res) => {
+app.post('/test-tool', async (req, res) => {
   try {
-    const comercio = comerciosData.find(c => c._id === req.params.id);
+    const { toolName, params } = req.body;
     
-    if (!comercio) {
-      return res.status(404).json({ 
-        error: 'Comercio no encontrado',
-        id: req.params.id 
-      });
+    if (!toolName) {
+      return res.status(400).json({ error: 'toolName es requerido' });
     }
+
+    const handler = comerciosTools.handlers[toolName];
+    if (!handler) {
+      return res.status(404).json({ error: `Tool '${toolName}' no encontrada` });
+    }
+
+    const resultado = await handler(params || {});
     
     res.json({
-      id: comercio._id,
-      nombre: comercio.name,
-      descripcion: limpiarHTML(comercio.description),
-      direccion: comercio.address,
-      telefono: comercio.phone,
-      whatsapp: comercio.whatsapp,
-      email: comercio.email,
-      horario: {
-        apertura: comercio.opening,
-        cierre: comercio.closing
-      },
-      redes: {
-        facebook: comercio.facebook,
-        instagram: comercio.instagram,
-        website: comercio.website,
-        tiktok: comercio.tiktok,
-        youtube: comercio.youtube
-      },
-      imagenes: comercio.images,
-      tags: comercio.tags,
-      verificado: comercio.verify,
-      destacado: comercio.isFeatured,
-      estadisticas: {
-        vistas: comercio.views,
-        likes: comercio.likeCount,
-        calificacion: comercio.ratingAvg
-      }
+      tool: toolName,
+      resultado: resultado,
+      timestamp: new Date().toISOString()
     });
-    
-  } catch (error) {
-    console.error('❌ Error en /comercios/:id:', error);
-    res.status(500).json({ error: 'Error al obtener comercio' });
-  }
-});
 
-/**
- * Endpoint para obtener categorías disponibles
- */
-app.get('/categorias', (req, res) => {
-  try {
-    const categorias = {
-      comida: {
-        nombre: 'Comida y Restaurantes',
-        keywords: ['restaurante', 'comida', 'pollo', 'pizza', 'cafetería'],
-        emoji: '🍽️'
-      },
-      eventos: {
-        nombre: 'Eventos y Decoración',
-        keywords: ['eventos', 'flores', 'decoración', 'bodas'],
-        emoji: '🎉'
-      },
-      servicios: {
-        nombre: 'Servicios',
-        keywords: ['barbería', 'contadores', 'reparación'],
-        emoji: '🔧'
-      },
-      compras: {
-        nombre: 'Compras y Supermercados',
-        keywords: ['super', 'tienda', 'mercado'],
-        emoji: '🛒'
-      },
-      salud: {
-        nombre: 'Salud y Bienestar',
-        keywords: ['doctor', 'farmacia', 'clínica'],
-        emoji: '⚕️'
-      }
-    };
-    
-    res.json({ categorias });
   } catch (error) {
-    res.status(500).json({ error: 'Error al obtener categorías' });
+    console.error('Error en /test-tool:', error);
+    res.status(500).json({ 
+      error: 'Error al ejecutar tool',
+      details: error.message 
+    });
   }
 });
 
@@ -442,18 +324,28 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    service: 'Claude Chat API con búsqueda inteligente',
-    version: '2.0.0',
-    comercios: {
-      total: comerciosData.length,
-      verificados: comerciosData.filter(c => c.verify).length,
-      destacados: comerciosData.filter(c => c.isFeatured).length
-    },
+    service: 'Claude Chat API con Tools - Frankie',
+    version: '3.0.0',
     configuracion: {
       claudeAPI: claudeKeyConfigured ? '✅ Configurada' : '❌ No configurada',
+      mongodb: mongoConectado ? '✅ Conectado' : '❌ Desconectado',
       puerto: PORT,
       entorno: process.env.NODE_ENV || 'development'
-    }
+    },
+    tools_disponibles: comerciosTools.tools.map(t => ({
+      nombre: t.name,
+      descripcion: t.description
+    }))
+  });
+});
+
+/**
+ * Listar tools disponibles
+ */
+app.get('/tools', (req, res) => {
+  res.json({
+    total: comerciosTools.tools.length,
+    tools: comerciosTools.tools
   });
 });
 
@@ -462,29 +354,26 @@ app.get('/health', (req, res) => {
  */
 app.get('/', (req, res) => {
   res.json({
-    servicio: 'Claude Chat API - Frankie Assistant',
-    version: '2.0.0',
-    descripcion: 'API de chat con búsqueda inteligente de comercios locales',
+    servicio: 'Claude Chat API - Frankie Assistant con Tools',
+    version: '3.0.0',
+    descripcion: 'API de chat con herramientas inteligentes para consultar comercios',
     endpoints: {
       chat: {
         metodo: 'POST',
         ruta: '/chat',
-        descripcion: 'Envía un mensaje al asistente virtual'
+        descripcion: 'Envía un mensaje al asistente virtual',
+        body: { message: 'string', history: 'array (opcional)' }
       },
-      buscarComercios: {
-        metodo: 'GET',
-        ruta: '/comercios/buscar?q=palabra',
-        descripcion: 'Busca comercios sin usar Claude'
+      testTool: {
+        metodo: 'POST',
+        ruta: '/test-tool',
+        descripcion: 'Prueba una tool directamente sin Claude',
+        body: { toolName: 'string', params: 'object' }
       },
-      obtenerComercio: {
+      tools: {
         metodo: 'GET',
-        ruta: '/comercios/:id',
-        descripcion: 'Obtiene detalles de un comercio específico'
-      },
-      categorias: {
-        metodo: 'GET',
-        ruta: '/categorias',
-        descripcion: 'Lista las categorías disponibles'
+        ruta: '/tools',
+        descripcion: 'Lista todas las tools disponibles'
       },
       health: {
         metodo: 'GET',
@@ -492,25 +381,28 @@ app.get('/', (req, res) => {
         descripcion: 'Verifica el estado del servicio'
       }
     },
+    ejemplos: {
+      chat: {
+        url: '/chat',
+        body: {
+          message: 'Busco un lugar para hacer eventos',
+          history: []
+        }
+      },
+      testTool: {
+        url: '/test-tool',
+        body: {
+          toolName: 'buscar_comercio',
+          params: { nombre: 'Moment' }
+        }
+      }
+    },
     documentacion: 'https://docs.anthropic.com'
-  });
-});
-
-/**
- * Endpoint para recargar comercios (útil para desarrollo)
- */
-app.post('/admin/reload-comercios', (req, res) => {
-  const exito = cargarComercios();
-  res.json({
-    exito,
-    comerciosCargados: comerciosData.length,
-    timestamp: new Date().toISOString()
   });
 });
 
 // ==================== MANEJO DE ERRORES ====================
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     error: 'Endpoint no encontrado',
@@ -520,7 +412,6 @@ app.use((req, res) => {
   });
 });
 
-// Error handler global
 app.use((err, req, res, next) => {
   console.error('❌ Error no manejado:', err);
   res.status(500).json({
@@ -533,30 +424,34 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log('\n🚀 ================================');
-  console.log(`   Claude Chat API - Frankie`);
+  console.log('   Claude Chat API - Frankie v3.0');
   console.log('   ================================');
   console.log(`   Puerto: ${PORT}`);
-  console.log(`   Comercios cargados: ${comerciosData.length}`);
+  console.log(`   MongoDB: ${mongoConectado ? '✅' : '⏳ Conectando...'}`);
   console.log(`   Claude API: ${process.env.CLAUDE_API_KEY ? '✅' : '❌'}`);
+  console.log(`   Tools: ${comerciosTools.tools.length} disponibles`);
   console.log('   ================================');
   console.log(`   💬 Chat: POST http://localhost:${PORT}/chat`);
-  console.log(`   🔍 Búsqueda: GET http://localhost:${PORT}/comercios/buscar?q=texto`);
+  console.log(`   🔧 Test Tool: POST http://localhost:${PORT}/test-tool`);
+  console.log(`   📋 Tools: GET http://localhost:${PORT}/tools`);
   console.log(`   🏥 Health: GET http://localhost:${PORT}/health`);
   console.log('   ================================\n');
 });
 
-// Manejo de señales de terminación
-process.on('SIGTERM', () => {
+// ==================== MANEJO DE SEÑALES ====================
+
+process.on('SIGTERM', async () => {
   console.log('⚠️  SIGTERM recibido, cerrando servidor...');
+  await closeMongoDB();
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('\n⚠️  SIGINT recibido, cerrando servidor...');
+  await closeMongoDB();
   process.exit(0);
 });
 
-// Manejo de errores no capturados
 process.on('unhandledRejection', (error) => {
   console.error('❌ Unhandled Rejection:', error);
 });

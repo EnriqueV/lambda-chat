@@ -1,21 +1,32 @@
 {
-    "name": "claude-chat-backend",
-    "version": "1.0.0",
-    "description": "Backend para chat con Claude AI",
+    "name": "claude-comercios-api",
+    "version": "3.0.0",
+    "description": "API de chat con Claude usando tools para consultar comercios desde MongoDB",
     "main": "index.js",
     "scripts": {
       "start": "node index.js",
-      "dev": "nodemon index.js"
+      "dev": "nodemon index.js",
+      "test": "node test-tools.js"
     },
-    "engines": {
-      "node": ">=18.0.0"
-    },
+    "keywords": [
+      "claude",
+      "chatbot",
+      "mongodb",
+      "tools",
+      "comercios"
+    ],
+    "author": "",
+    "license": "ISC",
     "dependencies": {
-      "axios": "^1.6.2",
+      "express": "^4.18.2",
       "cors": "^2.8.5",
-      "express": "^4.18.2"
+      "axios": "^1.6.0",
+      "mongodb": "^6.3.0"
     },
     "devDependencies": {
       "nodemon": "^3.0.1"
+    },
+    "engines": {
+      "node": ">=18.0.0"
     }
   }
