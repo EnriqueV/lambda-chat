@@ -25,7 +25,6 @@ const comerciosTools = {
         properties: {
           verificado: { type: 'boolean', description: 'Filtrar por comercios verificados' },
           destacado: { type: 'boolean', description: 'Filtrar por comercios destacados (isFeatured)' },
-          activo: { type: 'boolean', description: 'Filtrar por estado activo' },
           limite: { type: 'number', description: 'Número máximo de resultados', default: 10 },
           offset: { type: 'number', description: 'Desplazamiento para paginación', default: 0 },
         },
@@ -94,7 +93,7 @@ const comerciosTools = {
     buscar_comercio: async (args) => {
       try {
         const collection = await getCollection('Item');
-        let query = {};
+        let query = { status: 'Active' }; // ✅ Solo comercios activos
 
         if (args.id) {
           query._id = args.id;
@@ -135,16 +134,13 @@ const comerciosTools = {
     listar_comercios: async (args) => {
       try {
         const collection = await getCollection('Item');
-        let query = {};
+        let query = { status: 'Active' }; // ✅ Solo comercios activos por defecto
 
         if (typeof args.verificado === 'boolean') {
           query.verify = args.verificado;
         }
         if (typeof args.destacado === 'boolean') {
           query.isFeatured = args.destacado;
-        }
-        if (typeof args.activo === 'boolean') {
-          query.status = args.activo ? 'Active' : { $ne: 'Active' };
         }
 
         const comercios = await collection
@@ -173,7 +169,10 @@ const comerciosTools = {
     comercio_detalle_completo: async (args) => {
       try {
         const collection = await getCollection('Item');
-        const comercio = await collection.findOne({ _id: args.id });
+        const comercio = await collection.findOne({ 
+          _id: args.id,
+          status: 'Active' // ✅ Solo comercios activos
+        });
 
         if (!comercio) {
           return null;
@@ -261,7 +260,8 @@ const comerciosTools = {
         
         const comercios = await collection
           .find({
-            tags: { $regex: args.tag, $options: 'i' }
+            tags: { $regex: args.tag, $options: 'i' },
+            status: 'Active' // ✅ Solo comercios activos
           })
           .limit(args.limite || 10)
           .toArray();
@@ -286,7 +286,10 @@ const comerciosTools = {
     obtener_contacto_comercio: async (args) => {
       try {
         const collection = await getCollection('Item');
-        const comercio = await collection.findOne({ _id: args.id });
+        const comercio = await collection.findOne({ 
+          _id: args.id,
+          status: 'Active' // ✅ Solo comercios activos
+        });
 
         if (!comercio) {
           return null;
@@ -324,7 +327,10 @@ const comerciosTools = {
         const collection = await getCollection('Item');
         
         const comercios = await collection
-          .find({ verify: true })
+          .find({ 
+            verify: true,
+            status: 'Active' // ✅ Solo comercios activos
+          })
           .sort({ views: -1 })
           .limit(args.limite || 10)
           .toArray();
@@ -349,7 +355,7 @@ const comerciosTools = {
     buscar_por_ubicacion: async (args) => {
       try {
         const collection = await getCollection('Item');
-        let query = {};
+        let query = { status: 'Active' }; // ✅ Solo comercios activos
 
         if (args.ciudad) {
           query.$or = [

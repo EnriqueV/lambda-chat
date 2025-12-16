@@ -3,6 +3,7 @@ const cors = require('cors');
 const axios = require('axios');
 const { comerciosTools } = require('./tools/comercios-tools');
 const { connectMongoDB, closeMongoDB } = require('./tools/mongodb-connection');
+const reviewsService = require('./tools/reviews-service');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,6 +19,8 @@ async function inicializarServicio() {
   try {
     await connectMongoDB();
     mongoConectado = true;
+    // Crear índices de reviews
+    await reviewsService.crearIndices();
     console.log('✅ Servicio inicializado correctamente');
   } catch (error) {
     console.error('❌ Error al inicializar servicio:', error.message);
@@ -337,6 +340,95 @@ app.get('/health', (req, res) => {
       descripcion: t.description
     }))
   });
+});
+
+/**
+ * Crear una nueva review
+ */
+app.post('/reviews', async (req, res) => {
+  try {
+    const { item_id, reviewer_name, reviewer_email, rating, review_text } = req.body;
+
+    if (!mongoConectado) {
+      return res.status(503).json({ 
+        error: 'Servicio no disponible',
+        details: 'La conexión a la base de datos no está lista'
+      });
+    }
+
+    // Verificar si el usuario ya dejó una review para este item
+    const yaReviso = await reviewsService.usuarioYaRevisoItem(item_id, reviewer_email);
+    if (yaReviso) {
+      return res.status(409).json({
+        error: 'Ya existe una review de este usuario para este item',
+        suggestion: 'El usuario ya dejó una reseña para este producto/servicio'
+      });
+    }
+
+    // Crear la review (las validaciones están en el servicio)
+    const resultado = await reviewsService.crearReview({
+      item_id,
+      reviewer_name,
+      reviewer_email,
+      rating,
+      review_text
+    });
+
+    console.log(`✅ Review creada para item ${item_id}`);
+
+    res.status(201).json(resultado);
+
+  } catch (error) {
+    console.error('❌ Error en POST /reviews:', error.message);
+    
+    // Si es error de validación, retornar 400
+    if (error.message.includes('Errores de validación')) {
+      return res.status(400).json({
+        error: 'Datos inválidos',
+        details: error.message
+      });
+    }
+    
+    res.status(500).json({
+      error: 'Error al crear review',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * Obtener todas las reviews de un item
+ */
+app.get('/reviews/:item_id', async (req, res) => {
+  try {
+    const { item_id } = req.params;
+
+    if (!item_id) {
+      return res.status(400).json({
+        error: 'item_id es requerido en la URL'
+      });
+    }
+
+    if (!mongoConectado) {
+      return res.status(503).json({ 
+        error: 'Servicio no disponible',
+        details: 'La conexión a la base de datos no está lista'
+      });
+    }
+
+    const resultado = await reviewsService.obtenerReviewsPorItem(item_id);
+
+    console.log(`✅ Reviews obtenidas para item ${item_id}: ${resultado.total_reviews} encontradas`);
+
+    res.json(resultado);
+
+  } catch (error) {
+    console.error('❌ Error en GET /reviews/:item_id:', error.message);
+    res.status(500).json({
+      error: 'Error al obtener reviews',
+      details: error.message
+    });
+  }
 });
 
 /**
