@@ -5,6 +5,22 @@ const comerciosTools = {
   // Definición de herramientas para Claude
   tools: [
     {
+      name: 'buscar_inteligente',
+      description: 'Búsqueda inteligente que combina múltiples criterios. Usa esto PRIMERO antes que otras tools de búsqueda.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          terminos: { 
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array de términos de búsqueda (palabras clave, sinónimos, términos relacionados)' 
+          },
+          limite: { type: 'number', description: 'Límite de resultados', default: 10 },
+        },
+        required: ['terminos'],
+      },
+    },
+    {
       name: 'buscar_comercio',
       description: 'Busca información de un comercio por nombre, ID o palabra clave. Útil cuando el usuario pregunta por un negocio específico.',
       input_schema: {
@@ -90,6 +106,47 @@ const comerciosTools = {
 
   // Funciones ejecutoras
   handlers: {
+    buscar_inteligente: async (args) => {
+      try {
+        const collection = await getCollection('Item');
+        const terminos = args.terminos || [];
+        
+        // Construir query con $or para buscar cualquier término
+        const conditions = [];
+        
+        for (const termino of terminos) {
+          conditions.push(
+            { name: { $regex: termino, $options: 'i' } },
+            { description: { $regex: termino, $options: 'i' } },
+            { tags: { $regex: termino, $options: 'i' } },
+            { address: { $regex: termino, $options: 'i' } }
+          );
+        }
+        
+        const comercios = await collection
+          .find({
+            status: 'Active',
+            $or: conditions
+          })
+          .limit(args.limite || 10)
+          .toArray();
+    
+        return comercios.map(c => ({
+          id: c._id,
+          nombre: c.name,
+          descripcion: limpiarHTML(c.description).substring(0, 200) + '...',
+          direccion: c.address || 'No disponible',
+          telefono: c.phone || null,
+          whatsapp: c.whatsapp || null,
+          verificado: c.verify || false,
+          tags: c.tags || [],
+          calificacion: c.ratingAvg || 0,
+        }));
+      } catch (error) {
+        console.error('Error en buscar_inteligente:', error);
+        throw error;
+      }
+    },
     buscar_comercio: async (args) => {
       try {
         const collection = await getCollection('Item');
