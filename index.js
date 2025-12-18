@@ -99,44 +99,36 @@ app.post('/chat', async (req, res) => {
 
   const systemPrompt = `Eres Frankie, asistente para comercios locales en El Salvador.
 
-REGLAS DE EFICIENCIA (CRÍTICO):
-1. Máximo 2 búsquedas por consulta
-2. Si la primera búsqueda no encuentra nada → intenta UNA vez más con término diferente
-3. Si la segunda también falla → USA explorar_categorias_disponibles INMEDIATAMENTE
-4. NUNCA repitas la misma búsqueda o búsquedas muy similares
-5. Respuestas concisas (chat móvil)
-
-ESTRATEGIA DE BÚSQUEDA:
-Primera búsqueda sin resultados → Segunda búsqueda alternativa
-Segunda búsqueda sin resultados → explorar_categorias_disponibles
-Con las categorías disponibles → Responder honestamente qué hay
-
-EJEMPLO CORRECTO:
-Usuario: "mecánica automotriz"
-1. buscar_comercio("mecánica automotriz") → sin resultados
-2. buscar_comercio("taller") → sin resultados  
-3. explorar_categorias_disponibles() → obtiene lista real
-4. Responder: "No tengo talleres mecánicos, pero tengo: [categorías reales]. ¿Te sirve alguna?"
-
-EJEMPLO INCORRECTO (NO HACER):
-1. buscar_comercio("mecánica automotriz") → sin resultados
-2. buscar_comercio("taller mecánico") → sin resultados
-3. buscar_comercio("reparación autos") → sin resultados
-4. buscar_por_categoria("mecánica") → sin resultados
-[Esto gasta recursos y frustra al usuario]
-
-HERRAMIENTAS PRINCIPALES:
-- buscar_comercio: Primera opción (usa parámetro "busqueda")
-- explorar_categorias_disponibles: Cuando no hay resultados (úsala rápido)
-- compartir_comercio_con_usuario: Al mostrar UN comercio específico
-
-FORMATO RESPUESTAS:
-- Directo y conciso
-- Emojis básicos: 📍📞💬🏪
-- WhatsApp: wa.me/503XXXXXXXX
-- Honesto si no hay resultados
-
-Sé eficiente, directo y útil.`;
+  REGLA CRÍTICA - BÚSQUEDAS SIN RESULTADOS:
+  Si buscar_comercio o buscar_por_categoria no encuentran nada:
+  1. NO repitas la búsqueda con términos similares
+  2. INMEDIATAMENTE usa explorar_categorias_disponibles
+  3. Con la lista de categorías reales, responde honestamente
+  
+  FLUJO CORRECTO CUANDO NO HAY RESULTADOS:
+  ❌ INCORRECTO:
+  - buscar_comercio("mecánica") → []
+  - buscar_comercio("taller") → []
+  - buscar_comercio("reparación") → []
+  - Responder "no encontré nada"
+  
+  ✅ CORRECTO:
+  - buscar_comercio("mecánica") → []
+  - explorar_categorias_disponibles() → [lista real de categorías]
+  - Responder: "No tengo talleres mecánicos. Las categorías disponibles son: [mostrar top 5-10]. ¿Te interesa alguna?"
+  
+  HERRAMIENTAS:
+  - buscar_comercio: Primera búsqueda
+  - explorar_categorias_disponibles: USA ESTO si la búsqueda no encuentra nada
+  - compartir_comercio_con_usuario: Al mostrar un comercio específico
+  
+  FORMATO:
+  - Conciso (chat móvil)
+  - Emojis: 📍📞💬🏪
+  - WhatsApp: wa.me/503XXXXXXXX
+  - Honesto cuando no hay resultados
+  
+  RECUERDA: Si una búsqueda falla → explorar_categorias INMEDIATAMENTE.`;
   try {
     const { message, history = [] } = req.body;
 
@@ -172,7 +164,7 @@ Sé eficiente, directo y útil.`;
     const MAX_ITERACIONES = 3; // ✅ Reducido de 5 a 3
     let comercioCompartido = null;
     let busquedasSinResultados = 0;
-    const MAX_BUSQUEDAS_FALLIDAS = 2; // ✅ Límite de búsquedas fallidas
+    const MAX_BUSQUEDAS_FALLIDAS = 4; // ✅ Límite de búsquedas fallidas
 
     while (!conversacionCompleta && iteraciones < MAX_ITERACIONES) {
       iteraciones++;
@@ -220,7 +212,7 @@ Sé eficiente, directo y útil.`;
       if (toolCalls.length > 0) {
         console.log(`🔍 Tools:`, toolCalls.map(t => t.name).join(', '));
         
-        // ✅ Capturar comercio compartido
+        // Capturar comercio compartido
         for (const toolCall of toolCalls) {
           if (toolCall.name === 'compartir_comercio_con_usuario') {
             comercioCompartido = {
@@ -231,50 +223,52 @@ Sé eficiente, directo y útil.`;
             console.log('🏪 Comercio compartido:', comercioCompartido.nombre);
           }
         }
-
-        // ✅ NUEVO: Detectar búsquedas repetidas
+      
+        // ✅ MODIFICADO: No contar como búsqueda fallida HASTA ver los resultados
         const esBusqueda = toolCalls.some(t => 
           t.name === 'buscar_comercio' || 
           t.name === 'buscar_por_categoria' ||
-          t.name === 'listar_comercios' ||
           t.name === 'buscar_por_ubicacion'
         );
         
         const usaExplorar = toolCalls.some(t => 
           t.name === 'explorar_categorias_disponibles'
         );
-
+      
+        // ✅ NUEVO: Solo incrementar búsquedas fallidas si NO usa explorar
         if (esBusqueda && !usaExplorar) {
           busquedasSinResultados++;
-          console.log(`🔍 Búsquedas consecutivas: ${busquedasSinResultados}/${MAX_BUSQUEDAS_FALLIDAS}`);
-          
-          // ✅ Forzar exploración si hay muchas búsquedas
-          if (busquedasSinResultados >= MAX_BUSQUEDAS_FALLIDAS) {
-            console.log(`⚠️ Límite de búsquedas alcanzado, forzando respuesta`);
-            respuestaFinal += '\n\nLo siento, no encontré ese tipo de comercio. ¿Puedo ayudarte con algo más?';
-            conversacionCompleta = true;
-            break;
-          }
+          console.log(`🔍 Búsquedas: ${busquedasSinResultados}/${MAX_BUSQUEDAS_FALLIDAS}`);
         }
         
+        // ✅ MODIFICADO: Reset si usa explorar
         if (usaExplorar) {
-          // Reset contador si usa explorar
+          console.log('✅ Usando explorar_categorias, reseteando contador');
           busquedasSinResultados = 0;
         }
-
+      
         messages.push({
           role: 'assistant',
           content: content
         });
-
+      
+        // ✅ EJECUTAR TOOLS PRIMERO
         const toolResults = await procesarToolCalls(toolCalls);
-
+      
         messages.push({
           role: 'user',
           content: toolResults
         });
-
+      
         console.log(`✅ ${toolResults.length} tool(s) ejecutadas`);
+        
+        // ✅ NUEVO: Solo forzar fin si DESPUÉS de ejecutar las tools sigue sin resultados
+        // Y NO usó explorar_categorias
+        if (busquedasSinResultados >= MAX_BUSQUEDAS_FALLIDAS && !usaExplorar) {
+          console.log(`⚠️ ${MAX_BUSQUEDAS_FALLIDAS} búsquedas sin usar explorar, permitiendo una iteración más para que Claude use explorar_categorias`);
+          // NO forzar aquí, dar una iteración más
+        }
+        
       } else {
         conversacionCompleta = true;
       }
