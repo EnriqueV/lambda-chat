@@ -117,11 +117,11 @@ const comerciosTools = {
     },
     {
       name: 'explorar_categorias_disponibles',
-      description: 'Obtiene una lista de todos los tags/categorías disponibles en la base de datos. USA ESTO cuando no encuentres resultados para saber qué categorías existen realmente.',
+      description: 'Obtiene TODAS las categorías/tags que existen en la base de datos. USA ESTO INMEDIATAMENTE cuando buscar_comercio o buscar_por_categoria no encuentren resultados.',
       input_schema: {
         type: 'object',
         properties: {
-          limite: { type: 'number', description: 'Límite de categorías a retornar', default: 50 },
+          limite: { type: 'number', description: 'Límite de categorías a mostrar', default: 30 },
         },
       },
     },
@@ -229,31 +229,37 @@ const comerciosTools = {
       try {
         const collection = await getCollection('Item');
         
-        // Obtener todos los comercios activos
         const comercios = await collection
           .find({ status: 'Active' })
           .toArray();
         
         // Extraer todos los tags únicos
-        const allTags = new Set();
+        const tagCount = {};
         comercios.forEach(c => {
           if (c.tags && Array.isArray(c.tags)) {
             c.tags.forEach(tag => {
               if (tag && tag.trim()) {
-                allTags.add(tag.trim());
+                const tagNormalizado = tag.trim();
+                tagCount[tagNormalizado] = (tagCount[tagNormalizado] || 0) + 1;
               }
             });
           }
         });
         
-        const tagsArray = Array.from(allTags).sort();
+        // Ordenar por popularidad
+        const tagsOrdenados = Object.entries(tagCount)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, args.limite || 30);
         
-        console.log(`📊 Total de tags disponibles: ${tagsArray.length}`);
+        console.log(`📊 Categorías disponibles: ${tagsOrdenados.length}`);
         
         return {
-          total_categorias: tagsArray.length,
-          categorias_disponibles: tagsArray.slice(0, args.limite || 50),
-          mensaje: `Hay ${tagsArray.length} categorías disponibles en total`,
+          total_categorias: Object.keys(tagCount).length,
+          categorias_populares: tagsOrdenados.map(([tag, count]) => ({
+            categoria: tag,
+            cantidad_comercios: count
+          })),
+          mensaje: `Hay ${Object.keys(tagCount).length} categorías diferentes en total`,
         };
       } catch (error) {
         console.error('Error en explorar_categorias_disponibles:', error);

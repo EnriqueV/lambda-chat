@@ -99,7 +99,6 @@ app.post('/chat', async (req, res) => {
   try {
     const { message, history = [] } = req.body;
 
-    // Validaciones
     if (!message) {
       return res.status(400).json({ error: 'El mensaje es requerido' });
     }
@@ -121,77 +120,6 @@ app.post('/chat', async (req, res) => {
 
     console.log(`\n💬 Nueva consulta: "${message.substring(0, 80)}..."`);
 
-    // System prompt con instrucciones para el agente
-    const systemPrompt = `Eres Frankie, un asistente virtual amigable y útil para una aplicación móvil de comercios locales en El Salvador.
-
-    TU PROPÓSITO:
-    - Ayudar a los usuarios a encontrar comercios y negocios locales
-    - Proporcionar información detallada y precisa sobre servicios y productos
-    - Facilitar el contacto directo con los negocios
-    - Ofrecer recomendaciones personalizadas
-    
-    TU PERSONALIDAD:
-    - Amable, profesional y cercano con los salvadoreños
-    - Proactivo en ofrecer información útil
-    - Conciso pero completo (estás en un chat móvil)
-    - Honesto cuando no tienes información
-    
-    ESTRATEGIA DE BÚSQUEDA (MUY IMPORTANTE):
-    1. **Primera búsqueda**: Usa buscar_comercio con parámetro "busqueda"
-    2. **Si NO encuentra nada**: Intenta con 1-2 términos relacionados diferentes
-    3. **Si SIGUE sin resultados después de 2-3 intentos**: 
-       - USA explorar_categorias_disponibles para ver qué existe
-       - Informa honestamente al usuario que no hay ese tipo de comercio
-       - Muestra categorías relacionadas que SÍ existen
-    4. **NUNCA hagas más de 3 búsquedas sin resultados** - detente y explica
-    
-    EJEMPLOS DE MANEJO SIN RESULTADOS:
-    ❌ MAL:
-    - Buscar "mecánica automotriz" → sin resultados
-    - Buscar "taller mecánico" → sin resultados  
-    - Buscar "reparación autos" → sin resultados
-    - Buscar "mecánica" → sin resultados
-    - [Se repite infinitamente]
-    
-    ✅ BIEN:
-    - Buscar "mecánica automotriz" → sin resultados
-    - Buscar "taller" → sin resultados
-    - Usa explorar_categorias_disponibles
-    - Responde: "No tengo talleres de mecánica registrados, pero tengo: [categorías relacionadas]. ¿Te interesa alguna de estas?"
-    
-    HERRAMIENTAS DISPONIBLES:
-    - buscar_comercio: Búsqueda flexible en nombre, descripción y tags
-    - explorar_categorias_disponibles: **USA ESTO** cuando no encuentres resultados
-    - buscar_por_categoria: Para tags específicos
-    - listar_comercios: Para listados generales
-    - comercio_detalle_completo: Detalles completos de un comercio
-    - obtener_contacto_comercio: Datos de contacto específicos
-    - comercios_verificados: Opciones confiables
-    - buscar_por_ubicacion: Por ciudad o zona
-    - compartir_comercio_con_usuario: Cuando muestres UN comercio específico
-    
-    REGLAS CRÍTICAS:
-    - **Máximo 3 búsquedas** si no hay resultados → luego DETENTE
-    - Si después de 3 intentos no encuentras nada → USA explorar_categorias_disponibles
-    - Sé honesto si no tienes ese tipo de comercio
-    - Ofrece alternativas basadas en las categorías reales que existen
-    
-    FORMATO DE RESPUESTAS:
-    - Usa emojis apropiados (📍 ubicación, 📞 teléfono, 💬 WhatsApp, etc.)
-    - Estructura la información de forma clara
-    - Siempre incluye datos de contacto cuando estén disponibles
-    - Proporciona links de WhatsApp: wa.me/503XXXXXXXX
-    - Si hay varios resultados, menciona los más relevantes
-    
-    COMPARTIR COMERCIOS:
-    Cuando muestres información detallada de UN comercio específico:
-    1. Obtén los detalles con las tools normales
-    2. USA compartir_comercio_con_usuario con id, slug y nombre
-    3. Presenta la información al usuario
-    
-    NO uses compartir_comercio_con_usuario para listas de varios comercios.`;
-
-    // Construir mensajes iniciales
     let messages = [
       ...history,
       { role: 'user', content: message }
@@ -200,21 +128,21 @@ app.post('/chat', async (req, res) => {
     let conversacionCompleta = false;
     let respuestaFinal = '';
     let iteraciones = 0;
-    const MAX_ITERACIONES = 2;
-    let comercioCompartido = null; // ✅ NUEVO: Variable para capturar comercio compartido
+    const MAX_ITERACIONES = 3; // ✅ Reducido de 5 a 3
+    let comercioCompartido = null;
+    let busquedasSinResultados = 0;
+    const MAX_BUSQUEDAS_FALLIDAS = 2; // ✅ Límite de búsquedas fallidas
 
-    // Loop para manejar tool calls
     while (!conversacionCompleta && iteraciones < MAX_ITERACIONES) {
       iteraciones++;
       
-      console.log(`\n🔄 Iteración ${iteraciones} - Llamando a Claude...`);
+      console.log(`\n🔄 Iteración ${iteraciones}/${MAX_ITERACIONES}`);
 
-      // Llamar a Claude con tools
       const claudeResponse = await axios.post(
         'https://api.anthropic.com/v1/messages',
         {
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
+          max_tokens: 1024, // ✅ Reducido de 2048 a 1024
           system: systemPrompt,
           messages: messages,
           tools: comerciosTools.tools,
@@ -225,29 +153,33 @@ app.post('/chat', async (req, res) => {
             'x-api-key': apiKey,
             'anthropic-version': '2023-06-01',
           },
-          timeout: 30000,
+          timeout: 30000, // ✅ Reducido de 60s a 30s
         }
       );
 
-      const { content, stop_reason } = claudeResponse.data;
+      const { content, stop_reason, usage } = claudeResponse.data;
       const { texto, toolCalls } = extraerContenido(content);
+
+      // ✅ Loguear uso de tokens
+      if (usage) {
+        const costoInput = (usage.input_tokens / 1000000) * 3.00;
+        const costoOutput = (usage.output_tokens / 1000000) * 15.00;
+        const costoTotal = costoInput + costoOutput;
+        console.log(`📊 Tokens - Input: ${usage.input_tokens}, Output: ${usage.output_tokens}`);
+        console.log(`💵 Costo aproximado: $${costoTotal.toFixed(6)}`);
+      }
 
       console.log(`📊 Stop reason: ${stop_reason}`);
       console.log(`🔧 Tool calls: ${toolCalls.length}`);
       
-      // ✅ NUEVO: Mostrar qué tools se están llamando
-      if (toolCalls.length > 0) {
-        console.log(`🔍 Tools llamadas:`, toolCalls.map(t => t.name).join(', '));
-      }
-
-      // Si hay texto, guardarlo
       if (texto) {
         respuestaFinal += texto;
       }
 
-      // Si hay tool calls, ejecutarlas
       if (toolCalls.length > 0) {
-        // ✅ NUEVO: Capturar si se compartió un comercio ANTES de ejecutar
+        console.log(`🔍 Tools:`, toolCalls.map(t => t.name).join(', '));
+        
+        // ✅ Capturar comercio compartido
         for (const toolCall of toolCalls) {
           if (toolCall.name === 'compartir_comercio_con_usuario') {
             comercioCompartido = {
@@ -255,51 +187,75 @@ app.post('/chat', async (req, res) => {
               slug: toolCall.input.slug,
               nombre: toolCall.input.nombre,
             };
-            console.log('🏪 Comercio compartido capturado:', comercioCompartido);
+            console.log('🏪 Comercio compartido:', comercioCompartido.nombre);
           }
         }
 
-        // Agregar el mensaje del asistente con los tool calls
+        // ✅ NUEVO: Detectar búsquedas repetidas
+        const esBusqueda = toolCalls.some(t => 
+          t.name === 'buscar_comercio' || 
+          t.name === 'buscar_por_categoria' ||
+          t.name === 'listar_comercios' ||
+          t.name === 'buscar_por_ubicacion'
+        );
+        
+        const usaExplorar = toolCalls.some(t => 
+          t.name === 'explorar_categorias_disponibles'
+        );
+
+        if (esBusqueda && !usaExplorar) {
+          busquedasSinResultados++;
+          console.log(`🔍 Búsquedas consecutivas: ${busquedasSinResultados}/${MAX_BUSQUEDAS_FALLIDAS}`);
+          
+          // ✅ Forzar exploración si hay muchas búsquedas
+          if (busquedasSinResultados >= MAX_BUSQUEDAS_FALLIDAS) {
+            console.log(`⚠️ Límite de búsquedas alcanzado, forzando respuesta`);
+            respuestaFinal += '\n\nLo siento, no encontré ese tipo de comercio. ¿Puedo ayudarte con algo más?';
+            conversacionCompleta = true;
+            break;
+          }
+        }
+        
+        if (usaExplorar) {
+          // Reset contador si usa explorar
+          busquedasSinResultados = 0;
+        }
+
         messages.push({
           role: 'assistant',
           content: content
         });
 
-        // Ejecutar las tools
         const toolResults = await procesarToolCalls(toolCalls);
 
-        // Agregar los resultados
         messages.push({
           role: 'user',
           content: toolResults
         });
 
-        console.log(`✅ ${toolResults.length} tool(s) ejecutada(s), continuando conversación...`);
+        console.log(`✅ ${toolResults.length} tool(s) ejecutadas`);
       } else {
-        // No hay más tool calls, conversación completa
         conversacionCompleta = true;
       }
 
-      // Si Claude indica que terminó (end_turn), salir del loop
       if (stop_reason === 'end_turn') {
         conversacionCompleta = true;
       }
     }
 
-    console.log(`\n✅ Respuesta completada en ${iteraciones} iteración(es)`);
-    console.log(`📝 Longitud de respuesta: ${respuestaFinal.length} caracteres`);
-    
-    // ✅ NUEVO: Log final del comercio compartido
-    if (comercioCompartido) {
-      console.log(`🏪 Comercio final compartido: ${comercioCompartido.nombre} (${comercioCompartido.slug})`);
+    // ✅ Advertencia si alcanzó límite
+    if (iteraciones >= MAX_ITERACIONES && !conversacionCompleta) {
+      console.log(`⚠️ Límite de iteraciones alcanzado`);
     }
 
-    // ✅ MODIFICADO: Responder al cliente con info del comercio
+    console.log(`\n✅ Completado en ${iteraciones} iteración(es)`);
+    console.log(`📝 Respuesta: ${respuestaFinal.length} caracteres`);
+
     res.json({
       message: respuestaFinal,
-      itemSlug: comercioCompartido?.slug || null,     // ← NUEVO
-      itemId: comercioCompartido?.id || null,         // ← NUEVO
-      itemNombre: comercioCompartido?.nombre || null, // ← NUEVO
+      itemSlug: comercioCompartido?.slug || null,
+      itemId: comercioCompartido?.id || null,
+      itemNombre: comercioCompartido?.nombre || null,
       metadata: {
         iteraciones: iteraciones,
         timestamp: new Date().toISOString()
@@ -324,7 +280,6 @@ app.post('/chat', async (req, res) => {
     });
   }
 });
-
 // ==================== ENDPOINTS AUXILIARES ====================
 
 /**
