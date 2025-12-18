@@ -175,7 +175,7 @@ app.post('/chat', async (req, res) => {
         'https://api.anthropic.com/v1/messages',
         {
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024, // ✅ Reducido de 2048 a 1024
+          max_tokens: 2048, // ✅ Reducido de 2048 a 1024
           system: systemPrompt,
           messages: messages,
           tools: comerciosTools.tools,
