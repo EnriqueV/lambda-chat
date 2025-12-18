@@ -4,29 +4,30 @@
     "description": "API de chat con Claude usando tools para consultar comercios desde MongoDB",
     "main": "index.js",
     "scripts": {
-      "start": "node index.js",
-      "dev": "nodemon index.js",
-      "test": "node test-tools.js"
+        "start": "node index.js",
+        "dev": "nodemon index.js",
+        "test": "node test-tools.js"
     },
     "keywords": [
-      "claude",
-      "chatbot",
-      "mongodb",
-      "tools",
-      "comercios"
+        "claude",
+        "chatbot",
+        "mongodb",
+        "tools",
+        "comercios"
     ],
     "author": "",
     "license": "ISC",
     "dependencies": {
-      "express": "^4.18.2",
-      "cors": "^2.8.5",
-      "axios": "^1.6.0",
-      "mongodb": "^6.3.0"
+        "axios": "^1.6.0",
+        "cors": "^2.8.5",
+        "express": "^4.18.2",
+        "mongodb": "^6.3.0",
+        "node-cache": "^5.1.2"
     },
     "devDependencies": {
-      "nodemon": "^3.0.1"
+        "nodemon": "^3.0.1"
     },
     "engines": {
-      "node": ">=18.0.0"
+        "node": ">=18.0.0"
     }
-  }
+}

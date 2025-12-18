@@ -4,6 +4,9 @@ const axios = require('axios');
 const { comerciosTools } = require('./tools/comercios-tools');
 const { connectMongoDB, closeMongoDB } = require('./tools/mongodb-connection');
 const reviewsService = require('./tools/reviews-service');
+const { getCacheStats, clearCache } = require('./tools/cache-busquedas');
+const { getStats, getSlowestQueries, resetStats } = require('./tools/performance-monitor');
+
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -540,6 +543,33 @@ app.get('/', (req, res) => {
     },
     documentacion: 'https://docs.anthropic.com'
   });
+});
+
+/**
+ * Ver estadísticas de performance y caché
+ */
+app.get('/stats', (req, res) => {
+  res.json({
+    performance: getStats(),
+    cache: getCacheStats(),
+    slowest_queries: getSlowestQueries(10)
+  });
+});
+
+/**
+ * Limpiar caché manualmente
+ */
+app.post('/cache/clear', (req, res) => {
+  clearCache();
+  res.json({ message: 'Caché limpiado exitosamente' });
+});
+
+/**
+ * Reiniciar estadísticas
+ */
+app.post('/stats/reset', (req, res) => {
+  resetStats();
+  res.json({ message: 'Estadísticas reiniciadas' });
 });
 
 // ==================== MANEJO DE ERRORES ====================

@@ -1,5 +1,6 @@
-// tools/comercios-tools.js
 const { getCollection } = require('./mongodb-connection');
+const { getCachedResult, setCachedResult } = require('./cache-busquedas');
+const { trackQuery } = require('./performance-monitor');
 
 const comerciosTools = {
   // Definición de herramientas para Claude
@@ -104,11 +105,11 @@ const comerciosTools = {
     },
     {
       name: 'compartir_comercio_con_usuario',
-      description: 'SIEMPRE usa esta tool cuando muestres información detallada de UN comercio específico al usuario. Esto permite que el usuario pueda ir directamente a ver el comercio completo.',
+      description: 'SIEMPRE usa esta tool cuando muestres información detallada de UN comercio específico al usuario.',
       input_schema: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: 'ID del comercio que estás mostrando' },
+          id: { type: 'string', description: 'ID del comercio' },
           slug: { type: 'string', description: 'Slug del comercio' },
           nombre: { type: 'string', description: 'Nombre del comercio' },
         },
@@ -117,7 +118,7 @@ const comerciosTools = {
     },
     {
       name: 'explorar_categorias_disponibles',
-      description: 'Obtiene TODAS las categorías/tags que existen en la base de datos. USA ESTO INMEDIATAMENTE cuando buscar_comercio o buscar_por_categoria no encuentren resultados.',
+      description: 'Obtiene TODAS las categorías/tags que existen en la base de datos. USA ESTO cuando no encuentres resultados.',
       input_schema: {
         type: 'object',
         properties: {
@@ -130,13 +131,20 @@ const comerciosTools = {
   // Funciones ejecutoras
   handlers: {
     buscar_inteligente: async (args) => {
+      const startTime = Date.now();
+      
       try {
+        // ✅ Intentar caché primero
+        const cached = getCachedResult('buscar_inteligente', args);
+        if (cached) {
+          trackQuery('buscar_inteligente', Date.now() - startTime, cached.length);
+          return cached;
+        }
+
         const collection = await getCollection('Item');
         const terminos = args.terminos || [];
         
-        // Construir query con $or para buscar cualquier término
         const conditions = [];
-        
         for (const termino of terminos) {
           conditions.push(
             { name: { $regex: termino, $options: 'i' } },
@@ -154,10 +162,11 @@ const comerciosTools = {
           .limit(args.limite || 10)
           .toArray();
     
-        return comercios.map(c => ({
+        const result = comercios.map(c => ({
           id: c._id,
           nombre: c.name,
           descripcion: limpiarHTML(c.description).substring(0, 200) + '...',
+          slug: c.slug,
           direccion: c.address || 'No disponible',
           telefono: c.phone || null,
           whatsapp: c.whatsapp || null,
@@ -165,16 +174,89 @@ const comerciosTools = {
           tags: c.tags || [],
           calificacion: c.ratingAvg || 0,
         }));
+
+        // ✅ Guardar en caché
+        setCachedResult('buscar_inteligente', args, result);
+        
+        const duration = Date.now() - startTime;
+        trackQuery('buscar_inteligente', duration, result.length);
+        console.log(`⏱️ buscar_inteligente: ${duration}ms - ${result.length} resultados`);
+        
+        return result;
       } catch (error) {
         console.error('Error en buscar_inteligente:', error);
+        trackQuery('buscar_inteligente', Date.now() - startTime, 0);
         throw error;
       }
     },
+
+    buscar_comercio: async (args) => {
+      const startTime = Date.now();
+      
+      try {
+        // ✅ Intentar caché primero
+        const cached = getCachedResult('buscar_comercio', args);
+        if (cached) {
+          trackQuery('buscar_comercio', Date.now() - startTime, cached.length);
+          return cached;
+        }
+
+        const collection = await getCollection('Item');
+        let query = { status: 'Active' };
+
+        if (args.id) {
+          query._id = args.id;
+        } else if (args.slug) {
+          query.slug = args.slug;
+        } else if (args.nombre) {
+          query.$text = { $search: args.nombre };
+        } else if (args.busqueda) {
+          query.$text = { $search: args.busqueda };
+        }
+
+        const comercios = await collection
+          .find(query, {
+            projection: args.busqueda || args.nombre ? { score: { $meta: 'textScore' } } : {}
+          })
+          .sort(
+            args.busqueda || args.nombre ? { score: { $meta: 'textScore' } } : { views: -1 }
+          )
+          .limit(5)
+          .toArray();
+
+        const result = comercios.map(c => ({
+          id: c._id,
+          nombre: c.name,
+          descripcion: limpiarHTML(c.description),
+          slug: c.slug,
+          direccion: c.address || 'No disponible',
+          telefono: c.phone || null,
+          verificado: c.verify || false,
+          destacado: c.isFeatured || false,
+          tags: c.tags || [],
+          relevancia: c.score || 0,
+        }));
+
+        // ✅ Guardar en caché
+        setCachedResult('buscar_comercio', args, result);
+        
+        const duration = Date.now() - startTime;
+        trackQuery('buscar_comercio', duration, result.length);
+        console.log(`⏱️ buscar_comercio: ${duration}ms - ${result.length} resultados`);
+
+        return result;
+      } catch (error) {
+        console.error('Error en buscar_comercio:', error);
+        trackQuery('buscar_comercio', Date.now() - startTime, 0);
+        throw error;
+      }
+    },
+
     compartir_comercio_con_usuario: async (args) => {
+      const startTime = Date.now();
       console.log(`📤 Compartiendo comercio: ${args.nombre}`);
       
-      // ✅ Retornar un objeto simple que se pueda serializar
-      return {
+      const result = {
         success: true,
         message: `Comercio ${args.nombre} compartido exitosamente`,
         data: {
@@ -183,102 +265,78 @@ const comerciosTools = {
           nombre: args.nombre,
         }
       };
+      
+      trackQuery('compartir_comercio_con_usuario', Date.now() - startTime, 1);
+      return result;
     },
-   // En comercios-tools.js - ACTUALIZAR buscar_comercio
-buscar_comercio: async (args) => {
-  try {
-    const collection = await getCollection('Item');
-    let query = { status: 'Active' };
-
-    if (args.id) {
-      query._id = args.id;
-    } else if (args.slug) {
-      query.slug = args.slug;
-    } else if (args.nombre) {
-      // ✅ MEJORADO: Usar text search en lugar de regex
-      query.$text = { $search: args.nombre };
-    } else if (args.busqueda) {
-      // ✅ MEJORADO: Text search con score
-      query.$text = { $search: args.busqueda };
-    }
-
-    const comercios = await collection
-      .find(query, {
-        // Si usamos text search, incluir el score
-        projection: args.busqueda || args.nombre ? { score: { $meta: 'textScore' } } : {}
-      })
-      .sort(
-        // Ordenar por relevancia si es text search
-        args.busqueda || args.nombre ? { score: { $meta: 'textScore' } } : { views: -1 }
-      )
-      .limit(5)
-      .toArray();
-
-    console.log(`🔍 buscar_comercio encontró ${comercios.length} resultados`);
-
-    return comercios.map(c => ({
-      id: c._id,
-      nombre: c.name,
-      descripcion: limpiarHTML(c.description),
-      slug: c.slug,
-      direccion: c.address || 'No disponible',
-      telefono: c.phone || null,
-      verificado: c.verify || false,
-      destacado: c.isFeatured || false,
-      tags: c.tags || [],
-      relevancia: c.score || 0, // Score de relevancia
-    }));
-  } catch (error) {
-    console.error('Error en buscar_comercio:', error);
-    throw error;
-  }
-},
 
     explorar_categorias_disponibles: async (args) => {
+      const startTime = Date.now();
+      
       try {
+        // ✅ Intentar caché primero
+        const cached = getCachedResult('explorar_categorias', args);
+        if (cached) {
+          trackQuery('explorar_categorias_disponibles', Date.now() - startTime, cached.categorias_populares.length);
+          return cached;
+        }
+
         const collection = await getCollection('Item');
         
-        const comercios = await collection
-          .find({ status: 'Active' })
-          .toArray();
-        
-        // Extraer todos los tags únicos
-        const tagCount = {};
-        comercios.forEach(c => {
-          if (c.tags && Array.isArray(c.tags)) {
-            c.tags.forEach(tag => {
-              if (tag && tag.trim()) {
-                const tagNormalizado = tag.trim();
-                tagCount[tagNormalizado] = (tagCount[tagNormalizado] || 0) + 1;
-              }
-            });
+        // ✅ MEJORADO: Usar agregación (más rápido)
+        const resultado = await collection.aggregate([
+          { $match: { status: 'Active' } },
+          { $unwind: '$tags' },
+          { 
+            $group: {
+              _id: '$tags',
+              count: { $sum: 1 }
+            }
+          },
+          { $sort: { count: -1 } },
+          { $limit: args.limite || 30 },
+          {
+            $project: {
+              _id: 0,
+              categoria: '$_id',
+              cantidad_comercios: '$count'
+            }
           }
-        });
+        ]).toArray();
         
-        // Ordenar por popularidad
-        const tagsOrdenados = Object.entries(tagCount)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, args.limite || 30);
-        
-        console.log(`📊 Categorías disponibles: ${tagsOrdenados.length}`);
-        
-        return {
-          total_categorias: Object.keys(tagCount).length,
-          categorias_populares: tagsOrdenados.map(([tag, count]) => ({
-            categoria: tag,
-            cantidad_comercios: count
-          })),
-          mensaje: `Hay ${Object.keys(tagCount).length} categorías diferentes en total`,
+        const result = {
+          total_categorias: resultado.length,
+          categorias_populares: resultado,
+          mensaje: `Hay ${resultado.length} categorías disponibles`
         };
+
+        // ✅ Guardar en caché
+        setCachedResult('explorar_categorias', args, result);
+        
+        const duration = Date.now() - startTime;
+        trackQuery('explorar_categorias_disponibles', duration, resultado.length);
+        console.log(`⏱️ explorar_categorias: ${duration}ms - ${resultado.length} categorías`);
+        
+        return result;
       } catch (error) {
         console.error('Error en explorar_categorias_disponibles:', error);
+        trackQuery('explorar_categorias_disponibles', Date.now() - startTime, 0);
         throw error;
       }
     },
+
     listar_comercios: async (args) => {
+      const startTime = Date.now();
+      
       try {
+        const cached = getCachedResult('listar_comercios', args);
+        if (cached) {
+          trackQuery('listar_comercios', Date.now() - startTime, cached.length);
+          return cached;
+        }
+
         const collection = await getCollection('Item');
-        let query = { status: 'Active' }; // ✅ Solo comercios activos por defecto
+        let query = { status: 'Active' };
 
         if (typeof args.verificado === 'boolean') {
           query.verify = args.verificado;
@@ -288,13 +346,18 @@ buscar_comercio: async (args) => {
         }
 
         const comercios = await collection
-          .find(query)
-          .sort({ views: -1 }) // Ordenar por más vistos
+          .find(query, {
+            projection: {
+              _id: 1, name: 1, description: 1, address: 1,
+              verify: 1, isFeatured: 1, views: 1, ratingAvg: 1
+            }
+          })
+          .sort({ views: -1 })
           .skip(args.offset || 0)
           .limit(args.limite || 10)
           .toArray();
 
-        return comercios.map(c => ({
+        const result = comercios.map(c => ({
           id: c._id,
           nombre: c.name,
           descripcion: limpiarHTML(c.description).substring(0, 200) + '...',
@@ -304,40 +367,54 @@ buscar_comercio: async (args) => {
           vistas: c.views || 0,
           calificacion: c.ratingAvg || 0,
         }));
+
+        setCachedResult('listar_comercios', args, result);
+        
+        const duration = Date.now() - startTime;
+        trackQuery('listar_comercios', duration, result.length);
+        console.log(`⏱️ listar_comercios: ${duration}ms - ${result.length} resultados`);
+
+        return result;
       } catch (error) {
         console.error('Error en listar_comercios:', error);
+        trackQuery('listar_comercios', Date.now() - startTime, 0);
         throw error;
       }
     },
 
     comercio_detalle_completo: async (args) => {
+      const startTime = Date.now();
+      
       try {
+        const cached = getCachedResult('comercio_detalle', args);
+        if (cached) {
+          trackQuery('comercio_detalle_completo', Date.now() - startTime, 1);
+          return cached;
+        }
+
         const collection = await getCollection('Item');
         const comercio = await collection.findOne({ 
           _id: args.id,
-          status: 'Active' // ✅ Solo comercios activos
+          status: 'Active'
         });
 
         if (!comercio) {
+          trackQuery('comercio_detalle_completo', Date.now() - startTime, 0);
           return null;
         }
 
-        return {
+        const result = {
           id: comercio._id,
           nombre: comercio.name,
           descripcion: limpiarHTML(comercio.description),
-          descripcion_completa: comercio.description, // HTML completo
+          descripcion_completa: comercio.description,
           slug: comercio.slug,
-          
-          // Información de contacto
           contacto: {
             direccion: comercio.address || 'No disponible',
             telefono: comercio.phone || null,
             whatsapp: comercio.whatsapp || null,
             email: comercio.email || null,
           },
-          
-          // Redes sociales
           redes_sociales: {
             facebook: comercio.facebook || null,
             instagram: comercio.instagram || null,
@@ -345,75 +422,77 @@ buscar_comercio: async (args) => {
             tiktok: comercio.tiktok || null,
             youtube: comercio.youtube || null,
           },
-          
-          // Horarios
           horario: comercio.opening && comercio.closing 
             ? `${comercio.opening}:00 - ${comercio.closing}:00`
             : 'No especificado',
           apertura: comercio.opening || null,
           cierre: comercio.closing || null,
-          
-          // Ubicación
           ubicacion: {
             latitud: comercio.lat || null,
             longitud: comercio.lng || null,
           },
-          
-          // Información adicional
           precio: comercio.price || null,
           precio_oferta: comercio.salePrice || null,
           descuento: comercio.discount || 0,
           precio_neto: comercio.netPrice || null,
-          
-          // Estado
           verificado: comercio.verify || false,
           destacado: comercio.isFeatured || false,
           activo: comercio.status === 'Active',
           nuevo: comercio.isNewArrival || false,
           disponible: !comercio.isNotAvailable,
-          
-          // Estadísticas
           estadisticas: {
             vistas: comercio.views || 0,
             likes: comercio.likeCount || 0,
             calificaciones: comercio.ratingCount || 0,
             calificacion_promedio: comercio.ratingAvg || 0,
           },
-          
-          // Categorización
           tags: comercio.tags || [],
           marca: comercio.brand || null,
-          
-          // Imágenes
           imagen_destacada: comercio.featuredImage || null,
           imagenes: comercio.images || [],
-          
-          // Metadatos
           creado: comercio._created_at || null,
           actualizado: comercio._updated_at || null,
         };
+
+        setCachedResult('comercio_detalle', args, result);
+        
+        const duration = Date.now() - startTime;
+        trackQuery('comercio_detalle_completo', duration, 1);
+        console.log(`⏱️ comercio_detalle: ${duration}ms`);
+
+        return result;
       } catch (error) {
         console.error('Error en comercio_detalle_completo:', error);
+        trackQuery('comercio_detalle_completo', Date.now() - startTime, 0);
         throw error;
       }
     },
 
     buscar_por_categoria: async (args) => {
+      const startTime = Date.now();
+      
       try {
+        const cached = getCachedResult('buscar_categoria', args);
+        if (cached) {
+          trackQuery('buscar_por_categoria', Date.now() - startTime, cached.length);
+          return cached;
+        }
+
         const collection = await getCollection('Item');
         
         const comercios = await collection
           .find({
             tags: { $regex: args.tag, $options: 'i' },
-            status: 'Active' // ✅ Solo comercios activos
+            status: 'Active'
           })
           .limit(args.limite || 10)
           .toArray();
 
-        return comercios.map(c => ({
+        const result = comercios.map(c => ({
           id: c._id,
           nombre: c.name,
           descripcion: limpiarHTML(c.description).substring(0, 200) + '...',
+          slug: c.slug,
           direccion: c.address || 'No disponible',
           telefono: c.phone || null,
           whatsapp: c.whatsapp || null,
@@ -421,25 +500,49 @@ buscar_comercio: async (args) => {
           tags: c.tags || [],
           calificacion: c.ratingAvg || 0,
         }));
+
+        setCachedResult('buscar_categoria', args, result);
+        
+        const duration = Date.now() - startTime;
+        trackQuery('buscar_por_categoria', duration, result.length);
+        console.log(`⏱️ buscar_categoria: ${duration}ms - ${result.length} resultados`);
+
+        return result;
       } catch (error) {
         console.error('Error en buscar_por_categoria:', error);
+        trackQuery('buscar_por_categoria', Date.now() - startTime, 0);
         throw error;
       }
     },
 
     obtener_contacto_comercio: async (args) => {
+      const startTime = Date.now();
+      
       try {
+        const cached = getCachedResult('contacto', args);
+        if (cached) {
+          trackQuery('obtener_contacto_comercio', Date.now() - startTime, 1);
+          return cached;
+        }
+
         const collection = await getCollection('Item');
         const comercio = await collection.findOne({ 
           _id: args.id,
-          status: 'Active' // ✅ Solo comercios activos
+          status: 'Active'
+        }, {
+          projection: {
+            _id: 1, name: 1, phone: 1, whatsapp: 1, email: 1,
+            address: 1, facebook: 1, instagram: 1, website: 1,
+            tiktok: 1, youtube: 1, opening: 1, closing: 1, verify: 1
+          }
         });
 
         if (!comercio) {
+          trackQuery('obtener_contacto_comercio', Date.now() - startTime, 0);
           return null;
         }
 
-        return {
+        const result = {
           id: comercio._id,
           nombre: comercio.name,
           contacto: {
@@ -460,26 +563,48 @@ buscar_comercio: async (args) => {
             : 'Horario no especificado',
           verificado: comercio.verify || false,
         };
+
+        setCachedResult('contacto', args, result);
+        
+        const duration = Date.now() - startTime;
+        trackQuery('obtener_contacto_comercio', duration, 1);
+        console.log(`⏱️ contacto: ${duration}ms`);
+
+        return result;
       } catch (error) {
         console.error('Error en obtener_contacto_comercio:', error);
+        trackQuery('obtener_contacto_comercio', Date.now() - startTime, 0);
         throw error;
       }
     },
 
     comercios_verificados: async (args) => {
+      const startTime = Date.now();
+      
       try {
+        const cached = getCachedResult('verificados', args);
+        if (cached) {
+          trackQuery('comercios_verificados', Date.now() - startTime, cached.length);
+          return cached;
+        }
+
         const collection = await getCollection('Item');
         
         const comercios = await collection
           .find({ 
             verify: true,
-            status: 'Active' // ✅ Solo comercios activos
+            status: 'Active'
+          }, {
+            projection: {
+              _id: 1, name: 1, description: 1, address: 1,
+              phone: 1, whatsapp: 1, tags: 1, ratingAvg: 1, views: 1
+            }
           })
           .sort({ views: -1 })
           .limit(args.limite || 10)
           .toArray();
 
-        return comercios.map(c => ({
+        const result = comercios.map(c => ({
           id: c._id,
           nombre: c.name,
           descripcion: limpiarHTML(c.description).substring(0, 150) + '...',
@@ -490,16 +615,33 @@ buscar_comercio: async (args) => {
           calificacion: c.ratingAvg || 0,
           vistas: c.views || 0,
         }));
+
+        setCachedResult('verificados', args, result);
+        
+        const duration = Date.now() - startTime;
+        trackQuery('comercios_verificados', duration, result.length);
+        console.log(`⏱️ verificados: ${duration}ms - ${result.length} resultados`);
+
+        return result;
       } catch (error) {
         console.error('Error en comercios_verificados:', error);
+        trackQuery('comercios_verificados', Date.now() - startTime, 0);
         throw error;
       }
     },
 
     buscar_por_ubicacion: async (args) => {
+      const startTime = Date.now();
+      
       try {
+        const cached = getCachedResult('ubicacion', args);
+        if (cached) {
+          trackQuery('buscar_por_ubicacion', Date.now() - startTime, cached.length);
+          return cached;
+        }
+
         const collection = await getCollection('Item');
-        let query = { status: 'Active' }; // ✅ Solo comercios activos
+        let query = { status: 'Active' };
 
         if (args.ciudad) {
           query.$or = [
@@ -515,7 +657,7 @@ buscar_comercio: async (args) => {
           .limit(args.limite || 10)
           .toArray();
 
-        return comercios.map(c => ({
+        const result = comercios.map(c => ({
           id: c._id,
           nombre: c.name,
           descripcion: limpiarHTML(c.description).substring(0, 150) + '...',
@@ -528,8 +670,17 @@ buscar_comercio: async (args) => {
           },
           verificado: c.verify || false,
         }));
+
+        setCachedResult('ubicacion', args, result);
+        
+        const duration = Date.now() - startTime;
+        trackQuery('buscar_por_ubicacion', duration, result.length);
+        console.log(`⏱️ ubicacion: ${duration}ms - ${result.length} resultados`);
+
+        return result;
       } catch (error) {
         console.error('Error en buscar_por_ubicacion:', error);
+        trackQuery('buscar_por_ubicacion', Date.now() - startTime, 0);
         throw error;
       }
     },
