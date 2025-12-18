@@ -161,7 +161,7 @@ app.post('/chat', async (req, res) => {
     let conversacionCompleta = false;
     let respuestaFinal = '';
     let iteraciones = 0;
-    const MAX_ITERACIONES = 3; // ✅ Reducido de 5 a 3
+    const MAX_ITERACIONES = 4; // ✅ Reducido de 5 a 3
     let comercioCompartido = null;
     let busquedasSinResultados = 0;
     const MAX_BUSQUEDAS_FALLIDAS = 4; // ✅ Límite de búsquedas fallidas
@@ -186,7 +186,7 @@ app.post('/chat', async (req, res) => {
             'x-api-key': apiKey,
             'anthropic-version': '2023-06-01',
           },
-          timeout: 30000, // ✅ Reducido de 60s a 30s
+          timeout: 40000, // ✅ Reducido de 60s a 30s
         }
       );
 
@@ -285,17 +285,34 @@ app.post('/chat', async (req, res) => {
 
     console.log(`\n✅ Completado en ${iteraciones} iteración(es)`);
     console.log(`📝 Respuesta: ${respuestaFinal.length} caracteres`);
+    console.log(`\n✅ Respuesta completada en ${iteraciones} iteración(es)`);
+console.log(`📝 Respuesta: ${respuestaFinal.length} caracteres`);
 
-    res.json({
-      message: respuestaFinal,
-      itemSlug: comercioCompartido?.slug || null,
-      itemId: comercioCompartido?.id || null,
-      itemNombre: comercioCompartido?.nombre || null,
-      metadata: {
-        iteraciones: iteraciones,
-        timestamp: new Date().toISOString()
-      }
-    });
+// ✅ NUEVO: Forzar respuesta si está vacía
+if (!respuestaFinal || respuestaFinal.trim() === '') {
+  console.log('⚠️ Respuesta vacía detectada, generando respuesta por defecto');
+  
+  if (iteraciones >= MAX_ITERACIONES) {
+    respuestaFinal = 'Lo siento, tuve problemas procesando tu solicitud. ¿Podrías reformular tu pregunta?';
+  } else {
+    respuestaFinal = 'Disculpa, hubo un problema. ¿En qué más puedo ayudarte?';
+  }
+}
+
+if (comercioCompartido) {
+  console.log(`🏪 Comercio final compartido: ${comercioCompartido.nombre} (${comercioCompartido.slug})`);
+}
+
+res.json({
+  message: respuestaFinal,
+  itemSlug: comercioCompartido?.slug || null,
+  itemId: comercioCompartido?.id || null,
+  itemNombre: comercioCompartido?.nombre || null,
+  metadata: {
+    iteraciones: iteraciones,
+    timestamp: new Date().toISOString()
+  }
+});
 
   } catch (error) {
     console.error('❌ Error en /chat:', error.message);
