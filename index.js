@@ -161,7 +161,7 @@ app.post('/chat', async (req, res) => {
     let conversacionCompleta = false;
     let respuestaFinal = '';
     let iteraciones = 0;
-    const MAX_ITERACIONES = 4; // ✅ Reducido de 5 a 3
+    const MAX_ITERACIONES = 5; // ✅ Reducido de 5 a 3
     let comercioCompartido = null;
     let busquedasSinResultados = 0;
     const MAX_BUSQUEDAS_FALLIDAS = 4; // ✅ Límite de búsquedas fallidas
@@ -186,7 +186,7 @@ app.post('/chat', async (req, res) => {
             'x-api-key': apiKey,
             'anthropic-version': '2023-06-01',
           },
-          timeout: 40000, // ✅ Reducido de 60s a 30s
+          timeout: 50000, // ✅ Reducido de 60s a 30s
         }
       );
 
