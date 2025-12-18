@@ -161,15 +161,17 @@ const comerciosTools = {
       }
     },
     compartir_comercio_con_usuario: async (args) => {
-      // Esta tool solo retorna metadata, no ejecuta nada
+      console.log(`📤 Compartiendo comercio: ${args.nombre}`);
+      
+      // ✅ Retornar un objeto simple que se pueda serializar
       return {
-        compartido: true,
-        comercio: {
+        success: true,
+        message: `Comercio ${args.nombre} compartido exitosamente`,
+        data: {
           id: args.id,
           slug: args.slug,
           nombre: args.nombre,
-        },
-        mensaje: `Comercio compartido: ${args.nombre}`,
+        }
       };
     },
     buscar_comercio: async (args) => {
