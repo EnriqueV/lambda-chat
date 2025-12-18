@@ -102,6 +102,19 @@ const comerciosTools = {
         },
       },
     },
+    {
+      name: 'compartir_comercio_con_usuario',
+      description: 'SIEMPRE usa esta tool cuando muestres información detallada de UN comercio específico al usuario. Esto permite que el usuario pueda ir directamente a ver el comercio completo.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'ID del comercio que estás mostrando' },
+          slug: { type: 'string', description: 'Slug del comercio' },
+          nombre: { type: 'string', description: 'Nombre del comercio' },
+        },
+        required: ['id', 'slug', 'nombre'],
+      },
+    },
   ],
 
   // Funciones ejecutoras
@@ -146,6 +159,18 @@ const comerciosTools = {
         console.error('Error en buscar_inteligente:', error);
         throw error;
       }
+    },
+    compartir_comercio_con_usuario: async (args) => {
+      // Esta tool solo retorna metadata, no ejecuta nada
+      return {
+        compartido: true,
+        comercio: {
+          id: args.id,
+          slug: args.slug,
+          nombre: args.nombre,
+        },
+        mensaje: `Comercio compartido: ${args.nombre}`,
+      };
     },
     buscar_comercio: async (args) => {
       try {

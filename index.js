@@ -171,11 +171,23 @@ app.post('/chat', async (req, res) => {
     - Proporciona links de WhatsApp: wa.me/503XXXXXXXX
     - Si hay varios resultados, menciona los más relevantes
     
-    IMPORTANTE:
-    - USA las herramientas de forma inteligente y persistente
-    - NO inventes información, usa solo lo que las herramientas devuelvan
-    - Si un dato no está disponible, dilo claramente
-    - Sé específico con números de teléfono y direcciones`;
+    IMPORTANTE - COMPARTIR COMERCIOS:
+Cuando muestres información detallada de UN comercio específico al usuario, SIEMPRE debes:
+1. Primero obtener los detalles del comercio con las tools normales
+2. Luego USAR la tool "compartir_comercio_con_usuario" con el id, slug y nombre
+3. Después presentar la información al usuario
+
+Ejemplo correcto:
+- Usuario: "dame info de Rosales Taller"
+- Tú: [usas buscar_comercio para encontrarlo]
+- Tú: [usas comercio_detalle_completo para obtener info]
+- Tú: [usas compartir_comercio_con_usuario con el id y slug] ← IMPORTANTE
+- Tú: [presentas la info al usuario]
+
+NO uses compartir_comercio_con_usuario cuando:
+- Muestres una LISTA de varios comercios
+- Solo menciones un comercio de paso
+- No tengas el slug del comercio`;
 
     // Construir mensajes iniciales
     let messages = [
@@ -187,6 +199,7 @@ app.post('/chat', async (req, res) => {
     let respuestaFinal = '';
     let iteraciones = 0;
     const MAX_ITERACIONES = 5;
+    let comercioCompartido = null; // ✅ NUEVO: Variable para capturar comercio compartido
 
     // Loop para manejar tool calls
     while (!conversacionCompleta && iteraciones < MAX_ITERACIONES) {
@@ -219,6 +232,11 @@ app.post('/chat', async (req, res) => {
 
       console.log(`📊 Stop reason: ${stop_reason}`);
       console.log(`🔧 Tool calls: ${toolCalls.length}`);
+      
+      // ✅ NUEVO: Mostrar qué tools se están llamando
+      if (toolCalls.length > 0) {
+        console.log(`🔍 Tools llamadas:`, toolCalls.map(t => t.name).join(', '));
+      }
 
       // Si hay texto, guardarlo
       if (texto) {
@@ -227,6 +245,18 @@ app.post('/chat', async (req, res) => {
 
       // Si hay tool calls, ejecutarlas
       if (toolCalls.length > 0) {
+        // ✅ NUEVO: Capturar si se compartió un comercio ANTES de ejecutar
+        for (const toolCall of toolCalls) {
+          if (toolCall.name === 'compartir_comercio_con_usuario') {
+            comercioCompartido = {
+              id: toolCall.input.id,
+              slug: toolCall.input.slug,
+              nombre: toolCall.input.nombre,
+            };
+            console.log('🏪 Comercio compartido capturado:', comercioCompartido);
+          }
+        }
+
         // Agregar el mensaje del asistente con los tool calls
         messages.push({
           role: 'assistant',
@@ -256,10 +286,18 @@ app.post('/chat', async (req, res) => {
 
     console.log(`\n✅ Respuesta completada en ${iteraciones} iteración(es)`);
     console.log(`📝 Longitud de respuesta: ${respuestaFinal.length} caracteres`);
+    
+    // ✅ NUEVO: Log final del comercio compartido
+    if (comercioCompartido) {
+      console.log(`🏪 Comercio final compartido: ${comercioCompartido.nombre} (${comercioCompartido.slug})`);
+    }
 
-    // Responder al cliente
+    // ✅ MODIFICADO: Responder al cliente con info del comercio
     res.json({
       message: respuestaFinal,
+      itemSlug: comercioCompartido?.slug || null,     // ← NUEVO
+      itemId: comercioCompartido?.id || null,         // ← NUEVO
+      itemNombre: comercioCompartido?.nombre || null, // ← NUEVO
       metadata: {
         iteraciones: iteraciones,
         timestamp: new Date().toISOString()
