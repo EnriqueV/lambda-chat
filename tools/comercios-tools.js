@@ -115,6 +115,16 @@ const comerciosTools = {
         required: ['id', 'slug', 'nombre'],
       },
     },
+    {
+      name: 'explorar_categorias_disponibles',
+      description: 'Obtiene una lista de todos los tags/categorías disponibles en la base de datos. USA ESTO cuando no encuentres resultados para saber qué categorías existen realmente.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          limite: { type: 'number', description: 'Límite de categorías a retornar', default: 50 },
+        },
+      },
+    },
   ],
 
   // Funciones ejecutoras
@@ -215,6 +225,41 @@ const comerciosTools = {
       }
     },
 
+    explorar_categorias_disponibles: async (args) => {
+      try {
+        const collection = await getCollection('Item');
+        
+        // Obtener todos los comercios activos
+        const comercios = await collection
+          .find({ status: 'Active' })
+          .toArray();
+        
+        // Extraer todos los tags únicos
+        const allTags = new Set();
+        comercios.forEach(c => {
+          if (c.tags && Array.isArray(c.tags)) {
+            c.tags.forEach(tag => {
+              if (tag && tag.trim()) {
+                allTags.add(tag.trim());
+              }
+            });
+          }
+        });
+        
+        const tagsArray = Array.from(allTags).sort();
+        
+        console.log(`📊 Total de tags disponibles: ${tagsArray.length}`);
+        
+        return {
+          total_categorias: tagsArray.length,
+          categorias_disponibles: tagsArray.slice(0, args.limite || 50),
+          mensaje: `Hay ${tagsArray.length} categorías disponibles en total`,
+        };
+      } catch (error) {
+        console.error('Error en explorar_categorias_disponibles:', error);
+        throw error;
+      }
+    },
     listar_comercios: async (args) => {
       try {
         const collection = await getCollection('Item');

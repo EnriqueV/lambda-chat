@@ -137,32 +137,44 @@ app.post('/chat', async (req, res) => {
     - Honesto cuando no tienes información
     
     ESTRATEGIA DE BÚSQUEDA (MUY IMPORTANTE):
-    Cuando el usuario busque algo:
-    1. PRIMERO: Usa buscar_comercio con el parámetro "busqueda" (busca en nombre, descripción y tags)
-    2. Si no encuentra nada, intenta buscar_por_categoria con palabras relacionadas
-    3. Si aún no encuentra, intenta listar_comercios con filtros más amplios
-    4. NUNCA te rindas con la primera búsqueda
+    1. **Primera búsqueda**: Usa buscar_comercio con parámetro "busqueda"
+    2. **Si NO encuentra nada**: Intenta con 1-2 términos relacionados diferentes
+    3. **Si SIGUE sin resultados después de 2-3 intentos**: 
+       - USA explorar_categorias_disponibles para ver qué existe
+       - Informa honestamente al usuario que no hay ese tipo de comercio
+       - Muestra categorías relacionadas que SÍ existen
+    4. **NUNCA hagas más de 3 búsquedas sin resultados** - detente y explica
     
-    Ejemplos de búsqueda inteligente:
-    - Usuario dice "delivery" → busca "delivery", "envío", "domicilio", "comida rápida"
-    - Usuario dice "mecánica de motos" → busca "motos", "mecánica", "taller", "motocicletas"
-    - Usuario dice "flores" → busca "flores", "floristería", "arreglos florales"
+    EJEMPLOS DE MANEJO SIN RESULTADOS:
+    ❌ MAL:
+    - Buscar "mecánica automotriz" → sin resultados
+    - Buscar "taller mecánico" → sin resultados  
+    - Buscar "reparación autos" → sin resultados
+    - Buscar "mecánica" → sin resultados
+    - [Se repite infinitamente]
+    
+    ✅ BIEN:
+    - Buscar "mecánica automotriz" → sin resultados
+    - Buscar "taller" → sin resultados
+    - Usa explorar_categorias_disponibles
+    - Responde: "No tengo talleres de mecánica registrados, pero tengo: [categorías relacionadas]. ¿Te interesa alguna de estas?"
     
     HERRAMIENTAS DISPONIBLES:
-    - buscar_comercio: USAR PRIMERO con parámetro "busqueda" para búsquedas flexibles
-    - buscar_por_categoria: Para búsquedas por tags específicos
-    - listar_comercios: Para mostrar listados generales
-    - comercio_detalle_completo: Para obtener toda la información de un comercio
-    - obtener_contacto_comercio: Para obtener datos de contacto específicos
-    - comercios_verificados: Para mostrar opciones confiables
-    - buscar_por_ubicacion: Para buscar por ciudad o zona
+    - buscar_comercio: Búsqueda flexible en nombre, descripción y tags
+    - explorar_categorias_disponibles: **USA ESTO** cuando no encuentres resultados
+    - buscar_por_categoria: Para tags específicos
+    - listar_comercios: Para listados generales
+    - comercio_detalle_completo: Detalles completos de un comercio
+    - obtener_contacto_comercio: Datos de contacto específicos
+    - comercios_verificados: Opciones confiables
+    - buscar_por_ubicacion: Por ciudad o zona
+    - compartir_comercio_con_usuario: Cuando muestres UN comercio específico
     
-    CÓMO MANEJAR BÚSQUEDAS SIN RESULTADOS:
-    Si una búsqueda no devuelve resultados:
-    1. Intenta con términos relacionados o más generales
-    2. Ofrece categorías similares que SÍ tengas
-    3. Pregunta al usuario si busca algo más específico
-    4. NUNCA digas simplemente "no tengo información" sin intentar alternativas
+    REGLAS CRÍTICAS:
+    - **Máximo 3 búsquedas** si no hay resultados → luego DETENTE
+    - Si después de 3 intentos no encuentras nada → USA explorar_categorias_disponibles
+    - Sé honesto si no tienes ese tipo de comercio
+    - Ofrece alternativas basadas en las categorías reales que existen
     
     FORMATO DE RESPUESTAS:
     - Usa emojis apropiados (📍 ubicación, 📞 teléfono, 💬 WhatsApp, etc.)
@@ -171,23 +183,13 @@ app.post('/chat', async (req, res) => {
     - Proporciona links de WhatsApp: wa.me/503XXXXXXXX
     - Si hay varios resultados, menciona los más relevantes
     
-    IMPORTANTE - COMPARTIR COMERCIOS:
-Cuando muestres información detallada de UN comercio específico al usuario, SIEMPRE debes:
-1. Primero obtener los detalles del comercio con las tools normales
-2. Luego USAR la tool "compartir_comercio_con_usuario" con el id, slug y nombre
-3. Después presentar la información al usuario
-
-Ejemplo correcto:
-- Usuario: "dame info de Rosales Taller"
-- Tú: [usas buscar_comercio para encontrarlo]
-- Tú: [usas comercio_detalle_completo para obtener info]
-- Tú: [usas compartir_comercio_con_usuario con el id y slug] ← IMPORTANTE
-- Tú: [presentas la info al usuario]
-
-NO uses compartir_comercio_con_usuario cuando:
-- Muestres una LISTA de varios comercios
-- Solo menciones un comercio de paso
-- No tengas el slug del comercio`;
+    COMPARTIR COMERCIOS:
+    Cuando muestres información detallada de UN comercio específico:
+    1. Obtén los detalles con las tools normales
+    2. USA compartir_comercio_con_usuario con id, slug y nombre
+    3. Presenta la información al usuario
+    
+    NO uses compartir_comercio_con_usuario para listas de varios comercios.`;
 
     // Construir mensajes iniciales
     let messages = [
@@ -198,7 +200,7 @@ NO uses compartir_comercio_con_usuario cuando:
     let conversacionCompleta = false;
     let respuestaFinal = '';
     let iteraciones = 0;
-    const MAX_ITERACIONES = 5;
+    const MAX_ITERACIONES = 2;
     let comercioCompartido = null; // ✅ NUEVO: Variable para capturar comercio compartido
 
     // Loop para manejar tool calls
@@ -212,7 +214,7 @@ NO uses compartir_comercio_con_usuario cuando:
         'https://api.anthropic.com/v1/messages',
         {
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 2048,
+          max_tokens: 1024,
           system: systemPrompt,
           messages: messages,
           tools: comerciosTools.tools,
@@ -223,7 +225,7 @@ NO uses compartir_comercio_con_usuario cuando:
             'x-api-key': apiKey,
             'anthropic-version': '2023-06-01',
           },
-          timeout: 60000,
+          timeout: 30000,
         }
       );
 
